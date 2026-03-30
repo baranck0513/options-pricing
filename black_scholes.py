@@ -53,7 +53,7 @@ def black_scholes(spot_price: float, strike_price: float, time_to_maturity: floa
     return discounted_strike * norm.cdf(-d2) - adjusted_spot_price * norm.cdf(-d1) # the theoretical black scholes price of the option
 
 
-def greeks(spot_price: float, strike_price: float, time_to_maturity: float, risk_free_rate: float, volatility: float, dividend_yield: float = 0.0) -> Tuple[float, float, float, float]:
+def greeks(spot_price: float, strike_price: float, time_to_maturity: float, risk_free_rate: float, volatility: float, dividend_yield: float = 0.0, option_type: OptionType = "call") -> Tuple[float, float, float, float]:
     """
     compute analytical black scholes greeks
 
@@ -63,6 +63,7 @@ def greeks(spot_price: float, strike_price: float, time_to_maturity: float, risk
     risk_free_rate --- continuously compounded risk free interest rate
     volatility --- annualised volatility of the underlying asset
     dividend_yield --- continuously compounded dividend yield
+    option_type --- 'call' or 'put'
     """
 
     if spot_price <= 0 or strike_price <= 0:
@@ -71,25 +72,36 @@ def greeks(spot_price: float, strike_price: float, time_to_maturity: float, risk
         raise ValueError("time_to_maturity must be positive.")
     if volatility <= 0:
         raise ValueError("volatility must be positive.")
+    if option_type not in {"call", "put"}:
+        raise ValueError("option_type must be 'call' or 'put'")
 
-    d1 = _d1(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility)
+    d1 = _d1(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility, dividend_yield=dividend_yield)
+    d2 = _d2(d1, volatility, time_to_maturity)
 
     # standard normal density, which appears in the sensitivity formulas
     pdf_d1 = norm.pdf(d1)
     sqrt_time_to_maturity = sqrt(time_to_maturity)
     discount_factor = exp(-risk_free_rate * time_to_maturity)
+    dividend_discount = exp(-dividend_yield * time_to_maturity)
 
     # delta --- sensitivity of option value to a small change in spot price
-    delta = norm.cdf(d1)
+    if option_type == "call":
+        delta = dividend_discount * norm.cdf(d1)
+    else:
+        delta = dividend_discount * (norm.cdf(d1) - 1.0)
 
-    # gamma --- curvature of option value with respect to spot price
-    gamma = pdf_d1 / (spot_price * volatility * sqrt_time_to_maturity)
+    # gamma --- curvature of option value with respect to spot price (same for call and put)
+    gamma = dividend_discount * pdf_d1 / (spot_price * volatility * sqrt_time_to_maturity)
 
-    # vega --- sensitivity to volatility, scaled per 1.0 change in volatility
-    vega = spot_price * pdf_d1 * sqrt_time_to_maturity
+    # vega --- sensitivity to volatility, scaled per 1.0 change in volatility (same for call and put)
+    vega = spot_price * dividend_discount * pdf_d1 * sqrt_time_to_maturity
 
     # theta --- sensitivity to the passage of time, reported per year
-    theta = (-(spot_price * pdf_d1 * volatility) / (2.0 * sqrt_time_to_maturity) - risk_free_rate * strike_price * discount_factor * norm.cdf(_d2(d1, volatility, time_to_maturity)))
+    common_theta = -(spot_price * dividend_discount * pdf_d1 * volatility) / (2.0 * sqrt_time_to_maturity)
+    if option_type == "call":
+        theta = common_theta - risk_free_rate * strike_price * discount_factor * norm.cdf(d2) + dividend_yield * spot_price * dividend_discount * norm.cdf(d1)
+    else:
+        theta = common_theta + risk_free_rate * strike_price * discount_factor * norm.cdf(-d2) - dividend_yield * spot_price * dividend_discount * norm.cdf(-d1)
 
     return delta, gamma, theta, vega
 
@@ -110,7 +122,7 @@ def verify_put_call_parity(spot_price: float, strike_price: float, time_to_matur
     call_price = black_scholes(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility, "call", dividend_yield=dividend_yield)
     put_price = black_scholes(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility, "put", dividend_yield=dividend_yield)
     parity_left = call_price - put_price
-    parity_right = spot_price - strike_price * exp(-risk_free_rate * time_to_maturity)
+    parity_right = spot_price * exp(-dividend_yield * time_to_maturity) - strike_price * exp(-risk_free_rate * time_to_maturity)
     return bool(np.isclose(parity_left, parity_right, atol=tolerance, rtol=0.0)) # true if put call parity holds within the tolerance, otherwise false
 
 
