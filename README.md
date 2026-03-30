@@ -11,6 +11,3 @@ Analytical pricing and Greeks for European options under the Black-Scholes model
 ## Requirements
 
 Python 3.x, numpy, scipy
-
-## Usage
-```python
