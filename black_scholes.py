@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+from math import exp, log, sqrt
+from typing import Literal, Tuple
+
+import numpy as np
+from scipy.stats import norm
+
+OptionType = Literal["call", "put"]
+
+
+# compute the black scholes d1 term
+def _d1(spot_price: float, strike_price: float, time_to_maturity: float, risk_free_rate: float, volatility: float) -> float:
+    return (log(spot_price / strike_price) + (risk_free_rate + 0.5 * volatility**2) * time_to_maturity) / (volatility * sqrt(time_to_maturity))
+
+
+# compute the black scholes d2 term
+def _d2(d1: float, volatility: float, time_to_maturity: float) -> float:
+    return d1 - volatility * sqrt(time_to_maturity)
+
+
+def black_scholes(spot_price: float, strike_price: float, time_to_maturity: float, risk_free_rate: float, volatility: float, option_type: OptionType) -> float:
+    """
+    price a european call or put option using the black scholes formula
+
+    spot_price --- current spot price of the underlying asset
+    strike_price --- option strike price
+    time_to_maturity --- time to maturity in years
+    risk_free_rate --- continuously compounded risk free interest rate
+    volatility --- annualised volatility of the underlying asset
+    """
+
+    if spot_price <= 0 or strike_price <= 0:
+        raise ValueError("spot_price and strike_price must be positive")
+    if time_to_maturity <= 0:
+        raise ValueError("time_to_maturity must be positive")
+    if volatility <= 0:
+        raise ValueError("volatility must be positive")
+    if option_type not in {"call", "put"}: # option payoff type must be either call or put
+        raise ValueError("option_type must be 'call' or 'put'")
+
+    d1 = _d1(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility)
+    d2 = _d2(d1, volatility, time_to_maturity)
+
+    # N(d1) and N(d2) are the risk neutral probabilities used in pricing
+    discounted_strike = strike_price * exp(-risk_free_rate * time_to_maturity)
+
+    if option_type == "call":
+        return spot_price * norm.cdf(d1) - discounted_strike * norm.cdf(d2)
+
+    return discounted_strike * norm.cdf(-d2) - spot_price * norm.cdf(-d1) # the theoretical black scholes price of the option
+
+
+def greeks(spot_price: float, strike_price: float, time_to_maturity: float, risk_free_rate: float, volatility: float) -> Tuple[float, float, float, float]:
+    """
+    compute analytical black scholes greeks
+
+    spot_price --- current spot price of the underlying asset
+    strike_price --- option strike price
+    time_to_maturity --- time to maturity in years
+    risk_free_rate --- continuously compounded risk free interest rate
+    volatility --- annualised volatility of the underlying asset
+    """
+
+    if spot_price <= 0 or strike_price <= 0:
+        raise ValueError("spot_price and strike_price must be positive.")
+    if time_to_maturity <= 0:
+        raise ValueError("time_to_maturity must be positive.")
+    if volatility <= 0:
+        raise ValueError("volatility must be positive.")
+
+    d1 = _d1(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility)
+
+    # standard normal density, which appears in the sensitivity formulas
+    pdf_d1 = norm.pdf(d1)
+    sqrt_time_to_maturity = sqrt(time_to_maturity)
+    discount_factor = exp(-risk_free_rate * time_to_maturity)
+
+    # delta --- sensitivity of option value to a small change in spot price
+    delta = norm.cdf(d1)
+
+    # gamma --- curvature of option value with respect to spot price
+    gamma = pdf_d1 / (spot_price * volatility * sqrt_time_to_maturity)
+
+    # vega --- sensitivity to volatility, scaled per 1.0 change in volatility
+    vega = spot_price * pdf_d1 * sqrt_time_to_maturity
+
+    # theta --- sensitivity to the passage of time, reported per year
+    theta = (-(spot_price * pdf_d1 * volatility) / (2.0 * sqrt_time_to_maturity) - risk_free_rate * strike_price * discount_factor * norm.cdf(_d2(d1, volatility, time_to_maturity)))
+
+    return delta, gamma, theta, vega
+
+
+def verify_put_call_parity(spot_price: float, strike_price: float, time_to_maturity: float, risk_free_rate: float, volatility: float, tolerance: float = 1e-10) -> bool:
+    """
+    verify the european put call parity relationship
+
+    spot_price --- current spot price of the underlying asset
+    strike_price --- option strike price
+    time_to_maturity --- time to maturity in years
+    risk_free_rate --- continuously compounded risk free interest rate
+    volatility --- annualised volatility of the underlying asset
+    tolerance --- absolute tolerance for parity checking
+    """
+
+    call_price = black_scholes(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility, "call")
+    put_price = black_scholes(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility, "put")
+    parity_left = call_price - put_price
+    parity_right = spot_price - strike_price * exp(-risk_free_rate * time_to_maturity)
+    return bool(np.isclose(parity_left, parity_right, atol=tolerance, rtol=0.0)) # true if put call parity holds within the tolerance, otherwise false
+
+
+if __name__ == "__main__":
+    spot_price = 100.0
+    strike_price = 105.0
+    time_to_maturity = 1.0
+    risk_free_rate = 0.05
+    volatility = 0.2
+
+    call_price = black_scholes(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility, "call")
+    put_price = black_scholes(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility, "put")
+    delta, gamma, theta, vega = greeks(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility)
+    parity_ok = verify_put_call_parity(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility)
+
+    print(f"Call price: {call_price:.6f}")
+    print(f"Put price: {put_price:.6f}")
+    print(f"Delta: {delta:.6f}")
+    print(f"Gamma: {gamma:.6f}")
+    print(f"Theta: {theta:.6f}")
+    print(f"Vega: {vega:.6f}")
+    print(f"Put-call parity holds: {parity_ok}")
